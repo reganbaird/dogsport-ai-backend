@@ -1,12 +1,23 @@
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+  // Always return JSON (even on errors)
+  res.setHeader("Content-Type", "application/json");
+
+  if (req.method !== "POST") {
+    return res.status(405).end(JSON.stringify({ error: "POST only" }));
+  }
 
   try {
-    const { text } = req.body ?? {};
-    if (!text) return res.status(400).json({ error: "Missing text" });
+    const body = req.body ?? {};
+    const text = body.text;
+
+    if (!text || typeof text !== "string") {
+      return res.status(400).end(JSON.stringify({ error: "Missing text" }));
+    }
 
     const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: "Missing OPENAI_API_KEY" });
+    if (!apiKey) {
+      return res.status(500).end(JSON.stringify({ error: "Missing OPENAI_API_KEY" }));
+    }
 
     const schema = {
       type: "object",
@@ -14,9 +25,9 @@ export default async function handler(req, res) {
       properties: {
         eventName: { type: "string" },
         sport: { type: "string" },
-        startDate: { type: ["string", "null"] },         // ISO-8601 preferred
-        endDate: { type: ["string", "null"] },           // ISO-8601 preferred
-        registrationLink: { type: ["string", "null"] },  // null if unknown
+        startDate: { type: ["string", "null"] },
+        endDate: { type: ["string", "null"] },
+        registrationLink: { type: ["string", "null"] },
         deadlines: {
           type: "array",
           items: {
@@ -63,12 +74,11 @@ export default async function handler(req, res) {
           {
             role: "system",
             content:
-              "Extract ONE event proposal from the user's text. " +
-              "Return ONLY JSON that matches the provided schema. " +
-              "Rules: deadlines must always be an array (use [] if none). " +
-              "attachment must always be an object with title and url (use empty strings if none). " +
+              "Return ONLY JSON matching the schema. " +
+              "deadlines must be an array (use []). " +
+              "attachment must be an object with title and url (use empty strings). " +
               "registrationLink must be null if unknown. " +
-              "Dates should be ISO-8601 strings if present, otherwise null."
+              "Dates should be ISO-8601 strings or null."
           },
           { role: "user", content: text }
         ],
@@ -83,18 +93,29 @@ export default async function handler(req, res) {
       })
     });
 
-        const data = await r.json();
+    const data = await r.json();
 
     if (!r.ok) {
-      return res.status(500).json({ error: "OpenAI failed", detail: JSON.stringify(data) });
+      return res.status(500).end(JSON.stringify({ error: "OpenAI failed", detail: data }));
     }
 
-    // Structured output text is inside: output -> [message] -> content -> [output_text] -> text
+    // Extract output text safely (works even when output_text is not at top level)
     const message = data.output?.find((o) => o.type === "message");
     const contentText = message?.content?.find((c) => c.type === "output_text")?.text;
 
-    if (!contentText) {
-      return res.status(500).json({ error: "No output_text", detail: JSON.stringify(data) });
+    if (!contentText || typeof contentText !== "string") {
+      return res.status(500).end(JSON.stringify({ error: "No output_text", detail: data }));
     }
 
-    return res.status(200).json(JSON.parse(contentText));
+    // Sometimes models still wrap JSON in fences; strip just in case
+    let cleaned = contentText.trim();
+    cleaned = cleaned.replace(/^```json\s*/i, "");
+    cleaned = cleaned.replace(/^```\s*/i, "");
+    cleaned = cleaned.replace(/\s*```$/i, "");
+
+    const proposal = JSON.parse(cleaned);
+    return res.status(200).end(JSON.stringify(proposal));
+  } catch (e) {
+    return res.status(500).end(JSON.stringify({ error: "Server error", detail: String(e) }));
+  }
+}
