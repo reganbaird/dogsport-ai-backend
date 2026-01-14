@@ -71,13 +71,14 @@ export default async function handler(req, res) {
           {
             role: "system",
             content:
-              "Extract ALL events you can find in the user's text. " +
-              "Return ONLY JSON matching the schema. " +
-              "If there is only one event, proposals must still be an array with 1 item. " +
-              "deadlines must be an array (use []). " +
-              "attachment must be an object with title and url (use empty strings). " +
-              "registrationLink must be null if unknown. " +
-              "Dates should be ISO-8601 strings or null."
+  "Extract ALL events you can find in the user's text. Return ONLY JSON matching the schema. " +
+  "If there is only one event, proposals must still be an array with 1 item. " +
+  "deadlines must be an array (use []). " +
+  "attachment must be an object with title and url (use empty strings). " +
+  "registrationLink must be null if unknown. " +
+  "Dates must be ISO-8601. If the text says 'today', 'tomorrow', or a weekday, convert it to an actual date in ISO-8601 using America/New_York. " +
+  "If time is unknown, still output a date (YYYY-MM-DD) and set time to 12:00:00."
+
           },
           { role: "user", content: text }
         ],
