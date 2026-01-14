@@ -1,25 +1,18 @@
 export default async function handler(req, res) {
-  // Always return JSON (even on errors)
   res.setHeader("Content-Type", "application/json");
-
-  if (req.method !== "POST") {
-    return res.status(405).end(JSON.stringify({ error: "POST only" }));
-  }
+  if (req.method !== "POST") return res.status(405).end(JSON.stringify({ error: "POST only" }));
 
   try {
     const body = req.body ?? {};
     const text = body.text;
-
     if (!text || typeof text !== "string") {
       return res.status(400).end(JSON.stringify({ error: "Missing text" }));
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).end(JSON.stringify({ error: "Missing OPENAI_API_KEY" }));
-    }
+    if (!apiKey) return res.status(500).end(JSON.stringify({ error: "Missing OPENAI_API_KEY" }));
 
-    const schema = {
+    const proposalSchema = {
       type: "object",
       additionalProperties: false,
       properties: {
@@ -51,15 +44,19 @@ export default async function handler(req, res) {
           required: ["title", "url"]
         }
       },
-      required: [
-        "eventName",
-        "sport",
-        "startDate",
-        "endDate",
-        "registrationLink",
-        "deadlines",
-        "attachment"
-      ]
+      required: ["eventName","sport","startDate","endDate","registrationLink","deadlines","attachment"]
+    };
+
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        proposals: {
+          type: "array",
+          items: proposalSchema
+        }
+      },
+      required: ["proposals"]
     };
 
     const r = await fetch("https://api.openai.com/v1/responses", {
@@ -74,7 +71,9 @@ export default async function handler(req, res) {
           {
             role: "system",
             content:
+              "Extract ALL events you can find in the user's text. " +
               "Return ONLY JSON matching the schema. " +
+              "If there is only one event, proposals must still be an array with 1 item. " +
               "deadlines must be an array (use []). " +
               "attachment must be an object with title and url (use empty strings). " +
               "registrationLink must be null if unknown. " +
@@ -85,7 +84,7 @@ export default async function handler(req, res) {
         text: {
           format: {
             type: "json_schema",
-            name: "AIEventProposal",
+            name: "AIParseResult",
             strict: true,
             schema
           }
@@ -99,7 +98,6 @@ export default async function handler(req, res) {
       return res.status(500).end(JSON.stringify({ error: "OpenAI failed", detail: data }));
     }
 
-    // Extract output text safely (works even when output_text is not at top level)
     const message = data.output?.find((o) => o.type === "message");
     const contentText = message?.content?.find((c) => c.type === "output_text")?.text;
 
@@ -107,14 +105,13 @@ export default async function handler(req, res) {
       return res.status(500).end(JSON.stringify({ error: "No output_text", detail: data }));
     }
 
-    // Sometimes models still wrap JSON in fences; strip just in case
     let cleaned = contentText.trim();
     cleaned = cleaned.replace(/^```json\s*/i, "");
     cleaned = cleaned.replace(/^```\s*/i, "");
     cleaned = cleaned.replace(/\s*```$/i, "");
 
-    const proposal = JSON.parse(cleaned);
-    return res.status(200).end(JSON.stringify(proposal));
+    const result = JSON.parse(cleaned);
+    return res.status(200).end(JSON.stringify(result));
   } catch (e) {
     return res.status(500).end(JSON.stringify({ error: "Server error", detail: String(e) }));
   }
