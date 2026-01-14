@@ -20,9 +20,8 @@ export default async function handler(req, res) {
           {
             role: "system",
             content:
-              "Return ONLY valid JSON for ONE AIEventProposal with keys: " +
-              "eventName (string), sport (string), startDate (string|null ISO-8601), endDate (string|null ISO-8601), " +
-              "registrationLink (string|null), deadlines (array of {type,date,notes}), attachment ({title,url}).",
+              "Return ONLY a single JSON object. Do NOT wrap in markdown. No ``` fences. " +
+              "JSON must match AIEventProposal keys: eventName, sport, startDate, endDate, registrationLink, deadlines, attachment.",
           },
           { role: "user", content: text },
         ],
@@ -31,7 +30,6 @@ export default async function handler(req, res) {
 
     const data = await r.json();
 
-    // Pull the model's text output safely from `output`
     const message = data.output?.find((o) => o.type === "message");
     const contentText = message?.content?.find((c) => c.type === "output_text")?.text;
 
@@ -49,8 +47,13 @@ export default async function handler(req, res) {
       });
     }
 
-    // contentText should be pure JSON per system prompt
-    const proposal = JSON.parse(contentText);
+    // Strip ```json fences if the model ignores instructions
+    let cleaned = contentText.trim();
+    cleaned = cleaned.replace(/^```json\s*/i, "");
+    cleaned = cleaned.replace(/^```\s*/i, "");
+    cleaned = cleaned.replace(/\s*```$/i, "");
+
+    const proposal = JSON.parse(cleaned);
     return res.status(200).json(proposal);
   } catch (e) {
     return res.status(500).json({ error: "Server error", detail: String(e) });
