@@ -8,7 +8,6 @@ export default async function handler(req, res) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return res.status(500).json({ error: "Missing OPENAI_API_KEY" });
 
-    // Ask OpenAI for STRICT JSON that matches your AIEventProposal model
     const r = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -21,75 +20,37 @@ export default async function handler(req, res) {
           {
             role: "system",
             content:
-              "Extract ONE event proposal from the user's text and output ONLY valid JSON with keys: " +
+              "Return ONLY valid JSON for ONE AIEventProposal with keys: " +
               "eventName (string), sport (string), startDate (string|null ISO-8601), endDate (string|null ISO-8601), " +
-              "registrationLink (string|null), deadlines (array), attachment (object with title,url). " +
-              "deadlines items must be objects with keys: type (string), date (string|null), notes (string|null). " +
-              "attachment must be {title: string, url: string}.",
+              "registrationLink (string|null), deadlines (array of {type,date,notes}), attachment ({title,url}).",
           },
           { role: "user", content: text },
         ],
-        // Structured Outputs (schema enforcement)
-        text: {
-          format: {
-            type: "json_schema",
-            name: "AIEventProposal",
-            strict: true,
-            schema: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                eventName: { type: "string" },
-                sport: { type: "string" },
-                startDate: { type: ["string", "null"] },
-                endDate: { type: ["string", "null"] },
-                registrationLink: { type: ["string", "null"] },
-                deadlines: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    additionalProperties: false,
-                    properties: {
-                      type: { type: "string" },
-                      date: { type: ["string", "null"] },
-                      notes: { type: ["string", "null"] },
-                    },
-                    required: ["type", "date", "notes"],
-                  },
-                },
-                attachment: {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    title: { type: "string" },
-                    url: { type: "string" },
-                  },
-                  required: ["title", "url"],
-                },
-              },
-              required: [
-                "eventName",
-                "sport",
-                "startDate",
-                "endDate",
-                "registrationLink",
-                "deadlines",
-                "attachment",
-              ],
-            },
-          },
-        },
       }),
     });
 
-    if (!r.ok) return res.status(500).json({ error: "OpenAI failed", detail: await r.text() });
-
     const data = await r.json();
 
-    // Most responses put the final text in `output_text`
-    const jsonText = data.output_text;
-    const proposal = JSON.parse(jsonText);
+    // Pull the model's text output safely from `output`
+    const message = data.output?.find((o) => o.type === "message");
+    const contentText = message?.content?.find((c) => c.type === "output_text")?.text;
 
+    if (!r.ok) {
+      return res.status(500).json({
+        error: "OpenAI failed",
+        detail: contentText ?? JSON.stringify(data),
+      });
+    }
+
+    if (!contentText) {
+      return res.status(500).json({
+        error: "OpenAI returned no output_text",
+        detail: JSON.stringify(data),
+      });
+    }
+
+    // contentText should be pure JSON per system prompt
+    const proposal = JSON.parse(contentText);
     return res.status(200).json(proposal);
   } catch (e) {
     return res.status(500).json({ error: "Server error", detail: String(e) });
