@@ -83,20 +83,18 @@ export default async function handler(req, res) {
       })
     });
 
-    const data = await r.json();
+        const data = await r.json();
 
     if (!r.ok) {
       return res.status(500).json({ error: "OpenAI failed", detail: JSON.stringify(data) });
     }
 
-    // With structured outputs, OpenAI returns JSON text in output_text
-    const jsonText = data.output_text;
-    if (!jsonText) {
+    // Structured output text is inside: output -> [message] -> content -> [output_text] -> text
+    const message = data.output?.find((o) => o.type === "message");
+    const contentText = message?.content?.find((c) => c.type === "output_text")?.text;
+
+    if (!contentText) {
       return res.status(500).json({ error: "No output_text", detail: JSON.stringify(data) });
     }
 
-    return res.status(200).json(JSON.parse(jsonText));
-  } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e) });
-  }
-}
+    return res.status(200).json(JSON.parse(contentText));
