@@ -8,11 +8,54 @@ export default async function handler(req, res) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return res.status(500).json({ error: "Missing OPENAI_API_KEY" });
 
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        eventName: { type: "string" },
+        sport: { type: "string" },
+        startDate: { type: ["string", "null"] },         // ISO-8601 preferred
+        endDate: { type: ["string", "null"] },           // ISO-8601 preferred
+        registrationLink: { type: ["string", "null"] },  // null if unknown
+        deadlines: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              type: { type: "string" },
+              date: { type: ["string", "null"] },
+              notes: { type: ["string", "null"] }
+            },
+            required: ["type", "date", "notes"]
+          }
+        },
+        attachment: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            title: { type: "string" },
+            url: { type: "string" }
+          },
+          required: ["title", "url"]
+        }
+      },
+      required: [
+        "eventName",
+        "sport",
+        "startDate",
+        "endDate",
+        "registrationLink",
+        "deadlines",
+        "attachment"
+      ]
+    };
+
     const r = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
         model: "gpt-4.1-mini",
@@ -20,41 +63,39 @@ export default async function handler(req, res) {
           {
             role: "system",
             content:
-              "Return ONLY a single JSON object. Do NOT wrap in markdown. No ``` fences. " +
-              "JSON must match AIEventProposal keys: eventName, sport, startDate, endDate, registrationLink, deadlines, attachment.",
+              "Extract ONE event proposal from the user's text. " +
+              "Return ONLY JSON that matches the provided schema. " +
+              "Rules: deadlines must always be an array (use [] if none). " +
+              "attachment must always be an object with title and url (use empty strings if none). " +
+              "registrationLink must be null if unknown. " +
+              "Dates should be ISO-8601 strings if present, otherwise null."
           },
-          { role: "user", content: text },
+          { role: "user", content: text }
         ],
-      }),
+        text: {
+          format: {
+            type: "json_schema",
+            name: "AIEventProposal",
+            strict: true,
+            schema
+          }
+        }
+      })
     });
 
     const data = await r.json();
 
-    const message = data.output?.find((o) => o.type === "message");
-    const contentText = message?.content?.find((c) => c.type === "output_text")?.text;
-
     if (!r.ok) {
-      return res.status(500).json({
-        error: "OpenAI failed",
-        detail: contentText ?? JSON.stringify(data),
-      });
+      return res.status(500).json({ error: "OpenAI failed", detail: JSON.stringify(data) });
     }
 
-    if (!contentText) {
-      return res.status(500).json({
-        error: "OpenAI returned no output_text",
-        detail: JSON.stringify(data),
-      });
+    // With structured outputs, OpenAI returns JSON text in output_text
+    const jsonText = data.output_text;
+    if (!jsonText) {
+      return res.status(500).json({ error: "No output_text", detail: JSON.stringify(data) });
     }
 
-    // Strip ```json fences if the model ignores instructions
-    let cleaned = contentText.trim();
-    cleaned = cleaned.replace(/^```json\s*/i, "");
-    cleaned = cleaned.replace(/^```\s*/i, "");
-    cleaned = cleaned.replace(/\s*```$/i, "");
-
-    const proposal = JSON.parse(cleaned);
-    return res.status(200).json(proposal);
+    return res.status(200).json(JSON.parse(jsonText));
   } catch (e) {
     return res.status(500).json({ error: "Server error", detail: String(e) });
   }
